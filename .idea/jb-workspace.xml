@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WorkspaceSettings">
+    <project name="API-Gateway" path="$PROJECT_DIR$/API-Gateway" />
+    <project name="Event-service" path="$PROJECT_DIR$/Event-service" />
+    <project name="shadow-ledger-service" path="$PROJECT_DIR$/shadow-ledger-service" />
+    <project name="Drift-correction-service" path="$PROJECT_DIR$/Drift-correction-service" />
+    <option name="workspace" value="true" />
+  </component>
+</project>

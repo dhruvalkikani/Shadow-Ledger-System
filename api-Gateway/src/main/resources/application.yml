@@ -1,0 +1,44 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: event-service
+          uri: http://event-service:8081
+          predicates:
+            - Path=/events/**
+          filters:
+            - AddRequestHeader=X-Trace-Id, ${X_TRACE_ID:default-trace}
+        - id: shadow-ledger-service
+          uri: http://shadow-ledger-service:8082
+          predicates:
+            - Path=/accounts/**
+          filters:
+            - AddRequestHeader=X-Trace-Id, ${X_TRACE_ID:default-trace}
+        - id: drift-correction-service
+          uri: http://drift-correction-service:8083
+          predicates:
+            - Path=/drift-check,/correct/**
+          filters:
+            - AddRequestHeader=X-Trace-Id, ${X_TRACE_ID:default-trace}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+  endpoint:
+    health:
+      show-details: always
+
+jwt:
+  secret: aHVkaWZjYmFua2luZ3NoYWRvd2xlZGdlcnN5c3RlbXNlY3JldGtleWZvcmp3dGF1dGhlbnRpY2F0aW9u
+  expiration: 86400000
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - [TraceId: %X{traceId}] - %msg%n"
