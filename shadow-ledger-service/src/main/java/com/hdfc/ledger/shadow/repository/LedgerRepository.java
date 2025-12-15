@@ -6,35 +6,32 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.util.Optional;
+import java.math.BigDecimal;
+import java.util.List;
 
 @Repository
 public interface LedgerRepository extends JpaRepository<LedgerEntry, Long> {
 
     boolean existsByEventId(String eventId);
 
+    List<LedgerEntry> findByAccountId(String accountId);
+
     @Query(value = """
-    WITH balance_calc AS (
-        SELECT 
-            :accountId as account_id,
-            COALESCE(SUM(
-                CASE
-                    WHEN type = 'CREDIT' THEN amount
-                    WHEN type = 'DEBIT' THEN -amount
-                    ELSE 0
-                END
-            ), 0) as balance,
-            MAX(event_id) as last_event
+        SELECT COALESCE(SUM(
+            CASE WHEN type = 'CREDIT' THEN amount ELSE -amount END
+        ), 0)
         FROM ledger_entries
         WHERE account_id = :accountId
-    )
-    SELECT 
-        COALESCE(account_id, :accountId) as account_id,
-        COALESCE(balance, 0) as balance,
-        last_event
-    FROM balance_calc
-    """, nativeQuery = true)
-    Optional<Object[]> calculateShadowBalance(@Param("accountId") String accountId);
+        """, nativeQuery = true)
+    BigDecimal computeBalance(@Param("accountId") String accountId);
+
+    @Query(value = """
+        SELECT event_id FROM ledger_entries
+        WHERE account_id = :accountId
+        ORDER BY event_timestamp DESC, event_id DESC
+        LIMIT 1
+        """, nativeQuery = true)
+    String lastEvent(@Param("accountId") String accountId);
 
     @Query(value = """
         SELECT
@@ -58,5 +55,5 @@ public interface LedgerRepository extends JpaRepository<LedgerEntry, Long> {
         WHERE account_id = :accountId
         ORDER BY event_timestamp, event_id
         """, nativeQuery = true)
-    java.util.List<Object[]> getRunningBalance(@Param("accountId") String accountId);
+    List<Object[]> getRunningBalance(@Param("accountId") String accountId);
 }

@@ -13,7 +13,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 
 @Service
 public class LedgerService {
@@ -67,17 +66,10 @@ public class LedgerService {
     }
 
     private BigDecimal calculateBalanceAfterTransaction(String accountId, LedgerEntry newEntry) {
-        Optional<Object[]> result = ledgerRepository.calculateShadowBalance(accountId);
-
-        BigDecimal currentBalance = BigDecimal.ZERO;
-        if (result.isPresent()) {
-            Object[] data = result.get();
-            // Handle different array lengths defensively
-            if (data.length >= 2 && data[1] != null) {
-                currentBalance = (BigDecimal) data[1];
-            } else if (data.length == 1 && data[0] instanceof BigDecimal) {
-                currentBalance = (BigDecimal) data[0];
-            }
+        // Use the simple computeBalance method - returns BigDecimal directly
+        BigDecimal currentBalance = ledgerRepository.computeBalance(accountId);
+        if (currentBalance == null) {
+            currentBalance = BigDecimal.ZERO;
         }
 
         BigDecimal transactionAmount = newEntry.getType() == LedgerEntry.TransactionType.CREDIT
@@ -87,40 +79,20 @@ public class LedgerService {
         return currentBalance.add(transactionAmount);
     }
 
-
     public Map<String, Object> getShadowBalance(String accountId) {
-        Optional<Object[]> result = ledgerRepository.calculateShadowBalance(accountId);
         Map<String, Object> response = new HashMap<>();
 
-        if (result.isPresent()) {
-            Object[] data = result.get();
+        // Use two simple queries instead of one complex query with Object[]
+        BigDecimal balance = ledgerRepository.computeBalance(accountId);
+        String lastEventId = ledgerRepository.lastEvent(accountId);
 
-            logger.info("Query returned {} columns for account: {}", data.length, accountId);
+        response.put("accountId", accountId);
+        response.put("balance", balance != null ? balance : BigDecimal.ZERO);
+        response.put("lastEvent", lastEventId);
 
-            if (data.length >= 3) {
-                response.put("accountId", data[0] != null ? data[0] : accountId);
-                response.put("balance", data[1] != null ? data[1] : BigDecimal.ZERO);
-                response.put("lastEvent", data[2]);
-            } else if (data.length == 2) {
-
-                response.put("accountId", accountId);
-                response.put("balance", data[1] != null ? data[1] : BigDecimal.ZERO);
-                response.put("lastEvent", null);
-            } else {
-
-                logger.warn("Unexpected result structure for account: {}, columns: {}", accountId, data.length);
-                response.put("accountId", accountId);
-                response.put("balance", BigDecimal.ZERO);
-                response.put("lastEvent", null);
-            }
-        } else {
-
-            response.put("accountId", accountId);
-            response.put("balance", BigDecimal.ZERO);
-            response.put("lastEvent", null);
-        }
+        logger.info("Shadow balance for account: {} = {}, lastEvent: {}",
+                accountId, balance, lastEventId);
 
         return response;
     }
-
 }
