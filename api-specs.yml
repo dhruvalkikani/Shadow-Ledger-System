@@ -1,0 +1,309 @@
+openapi: 3.0.3
+info:
+  title: Shadow Ledger System API
+  description: |
+    Banking Shadow Ledger System with microservices architecture.
+    
+    **Security**: All endpoints require JWT authentication (except `/auth/token`).
+    **RBAC Roles**:
+    - `USER`: `/events`, `/accounts/**`
+    - `AUDITOR`: `/drift-check`
+    - `ADMIN`: `/correct/**`
+    
+    **JWT Token Generation**:
+    ```
+    POST /auth/token
+    {
+      "username": "user1",
+      "roles": ["USER"]
+    }
+    ```
+  version: 1.0.0
+  contact:
+    name: Shadow Ledger Team
+    email: shadow-ledger@hdfc.com
+
+servers:
+  - url: http://localhost:8080
+    description: Local Development
+
+security:
+  - bearerAuth: []
+
+paths:
+  # API Gateway - Authentication
+  /auth/token:
+    post:
+      tags: [Authentication]
+      summary: Generate JWT token
+      description: Public endpoint to generate JWT tokens for testing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, roles]
+              properties:
+                username:
+                  type: string
+                  example: user1
+                roles:
+                  type: array
+                  items:
+                    type: string
+                    enum: [USER, AUDITOR, ADMIN]
+                  example: [USER]
+      responses:
+        '200':
+          description: JWT token generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '400':
+          description: Invalid request
+
+  # Event Service Endpoints (USER role)
+  /events:
+    post:
+      tags: [Event Service]
+      summary: Process financial event
+      description: |
+        Validates and processes financial events (credit/debit).
+        **Validation Rules**:
+        - `eventId` must be unique (idempotency)
+        - `amount` > 0
+        - `type` ∈ {credit, debit}
+        - Publishes to Kafka `transactions.raw` topic
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventId, accountId, type, amount, timestamp]
+              properties:
+                eventId:
+                  type: string
+                  example: E1001
+                accountId:
+                  type: string
+                  example: A10
+                type:
+                  type: string
+                  enum: [credit, debit]
+                  example: credit
+                amount:
+                  type: number
+                  format: double
+                  minimum: 0.01
+                  example: 1000.00
+                timestamp:
+                  type: integer
+                  format: int64
+                  example: 1735561800000
+      responses:
+        '200':
+          description: Event processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  eventId:
+                    type: string
+                    example: E1001
+        '400':
+          description: Invalid event data
+        '409':
+          description: Duplicate eventId
+
+  # Shadow Ledger Service Endpoints (USER role)
+  /accounts/{accountId}/shadow-balance:
+    get:
+      tags: [Shadow Ledger Service]
+      summary: Get shadow balance for account
+      description: |
+        Computes running balance using SQL window function:
+        ```
+        SUM(amount) OVER (
+          PARTITION BY account_id 
+          ORDER BY timestamp, event_id
+        )
+        ```
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: A10
+      responses:
+        '200':
+          description: Shadow balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accountId:
+                    type: string
+                    example: A10
+                  balance:
+                    type: number
+                    format: double
+                    example: 750.00
+                  lastEvent:
+                    type: string
+                    example: E005
+        '404':
+          description: Account not found
+
+  # Drift Correction Service Endpoints
+  /drift-check:
+    post:
+      tags: [Drift Correction Service]
+      summary: Detect drift between CBS and shadow ledger
+      description: |
+        Compares CBS reported balances vs shadow ledger balances.
+        **Auto-generates corrections** for simple mismatches.
+        Publishes to Kafka `transactions.corrections` topic.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/CBSBalance'
+      responses:
+        '200':
+          description: Drift detection results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalAccounts:
+                    type: integer
+                    example: 2
+                  driftsDetected:
+                    type: integer
+                    example: 1
+                  correctionsGenerated:
+                    type: integer
+                    example: 1
+                  drifts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        accountId:
+                          type: string
+                        cbsBalance:
+                          type: number
+                          format: double
+                        shadowBalance:
+                          type: number
+                          format: double
+                        difference:
+                          type: number
+                          format: double
+                        correctionAction:
+                          type: string
+                          enum: [auto_corrected, manual_review_required]
+        '400':
+          description: Invalid CBS data
+
+  /correct/{accountId}:
+    post:
+      tags: [Drift Correction Service]
+      summary: Manual correction endpoint
+      description: Generate manual correction event for account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: A10
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [credit, debit]
+            example: credit
+        - name: amount
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+            minimum: 0.01
+            example: 50.00
+      responses:
+        '200':
+          description: Correction event published
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Correction event published
+                  accountId:
+                    type: string
+                    example: A10
+        '400':
+          description: Invalid parameters
+
+  # Health Endpoints (All services)
+  /actuator/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+
+components:
+  schemas:
+    CBSBalance:
+      type: object
+      required: [accountId, reportedBalance]
+      properties:
+        accountId:
+          type: string
+          example: A10
+        reportedBalance:
+          type: number
+          format: double
+          example: 700.00
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
